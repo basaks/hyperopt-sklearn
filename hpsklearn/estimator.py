@@ -11,7 +11,7 @@ from sklearn.decomposition import PCA
 try:
     from sklearn.model_selection import KFold, StratifiedKFold, LeaveOneOut, \
                                         ShuffleSplit, StratifiedShuffleSplit, \
-                                        PredefinedSplit
+                                        PredefinedSplit, GroupKFold, GroupShuffleSplit, LeaveOneGroupOut
 except ImportError:
     # sklearn.cross_validation is deprecated in version 0.18 of sklearn
     from sklearn.cross_validation import KFold, StratifiedKFold, LeaveOneOut, \
@@ -206,7 +206,7 @@ def pfit_until_convergence(learner, is_classif, XEXfit, yfit, info,
         return (best_learner, n_iters)
 
 
-def _cost_fn(argd, X, y, EX_list, valid_size, n_folds, shuffle, random_state,
+def _cost_fn(argd, X, y, groups, EX_list, valid_size, n_folds, shuffle, random_state,
              use_partial_fit, info, timeout, _conn, loss_fn=None,
              continuous_loss_fn=False, best_loss=None, n_jobs=1):
     '''Calculate the loss function
@@ -237,36 +237,44 @@ def _cost_fn(argd, X, y, EX_list, valid_size, n_folds, shuffle, random_state,
         if n_folds is not None:
             if n_folds == -1:
                 info('Will use leave-one-out CV')
-                try:
+                # try:
+                if groups is None:
                     cv_iter = LeaveOneOut().split(X)
-                except TypeError:
-                    # Older syntax before sklearn version 0.18
-                    cv_iter = LeaveOneOut(len(y))
+                else:
+                    cv_iter = LeaveOneGroupOut().split(X, groups)
+                # except TypeError:
+                #     # Older syntax before sklearn version 0.18
+                #     cv_iter = LeaveOneOut(len(y))
             elif is_classif:
                 info('Will use stratified K-fold CV with K:', n_folds,
                      'and Shuffle:', shuffle)
-                try:
+                # try:
+                if groups is None:
                     cv_iter = StratifiedKFold(n_splits=n_folds,
                                               shuffle=shuffle,
                                               random_state=random_state
-                                             ).split(X, y)
-                except TypeError:
-                    # Older syntax before sklearn version 0.18
-                    cv_iter = StratifiedKFold(y, n_folds=n_folds,
-                                              shuffle=shuffle,
-                                              random_state=random_state)
+                                              ).split(X, y)
+                # except TypeError:
+                #     # Older syntax before sklearn version 0.18
+                #     cv_iter = StratifiedKFold(y, n_folds=n_folds,
+                #                               shuffle=shuffle,
+                #                               random_state=random_state)
             else:
-                info('Will use K-fold CV with K:', n_folds,
-                     'and Shuffle:', shuffle)
-                try:
-                    cv_iter = KFold(n_splits=n_folds,
-                                    shuffle=shuffle,
+                # try:
+                if groups is None:
+                    info('Will use K-fold CV with K:', n_folds,
+                         'and Shuffle:', shuffle)
+                    cv_iter = KFold(n_splits=n_folds, shuffle=shuffle,
                                     random_state=random_state).split(X)
-                except TypeError:
-                    # Older syntax before sklearn version 0.18
-                    cv_iter = KFold(len(y), n_folds=n_folds,
-                                    shuffle=shuffle,
-                                    random_state=random_state)
+                else:
+                    info('Will use GroupK-fold CV with K:', n_folds,
+                         'and ignoring Shuffle')
+                    cv_iter = GroupKFold(n_splits=n_folds).split(X)
+                # except TypeError:
+                #     # Older syntax before sklearn version 0.18
+                #     cv_iter = KFold(len(y), n_folds=n_folds,
+                #                     shuffle=shuffle,
+                #                     random_state=random_state)
         else:
             if not shuffle:  # always choose the last samples.
                 info('Will use the last', valid_size,
@@ -282,24 +290,29 @@ def _cost_fn(argd, X, y, EX_list, valid_size, n_folds, shuffle, random_state,
             elif is_classif:
                 info('Will use stratified shuffle-and-split with validation \
                       portion:', valid_size)
-                try:
-                    cv_iter = StratifiedShuffleSplit(1, test_size=valid_size,
-                                                     random_state=random_state
-                                                    ).split(X, y)
-                except TypeError:
-                    # Older syntax before sklearn version 0.18
-                    cv_iter = StratifiedShuffleSplit(y, 1, test_size=valid_size,
-                                                     random_state=random_state)
+                # try:
+                cv_iter = StratifiedShuffleSplit(1, test_size=valid_size,
+                                                 random_state=random_state
+                                                 ).split(X, y)
+                # except TypeError:
+                #     # Older syntax before sklearn version 0.18
+                #     cv_iter = StratifiedShuffleSplit(y, 1, test_size=valid_size,
+                #                                      random_state=random_state)
             else:
                 info('Will use shuffle-and-split with validation portion:',
                      valid_size)
-                try:
+                # try:
+                if groups is None:
                     cv_iter = ShuffleSplit(n_splits=1, test_size=valid_size,
                                            random_state=random_state).split(X)
-                except TypeError:
-                    # Older syntax before sklearn version 0.18
-                    cv_iter = ShuffleSplit(len(y), 1, test_size=valid_size,
-                                           random_state=random_state)
+                else:
+                    cv_iter = GroupShuffleSplit(n_splits=1, test_size=valid_size,
+                                                random_state=random_state).split(X)
+
+                # except TypeError:
+                #     # Older syntax before sklearn version 0.18
+                #     cv_iter = ShuffleSplit(len(y), 1, test_size=valid_size,
+                #                            random_state=random_state)
 
         # Use the above iterator for cross-validation prediction.
         cv_y_pool = np.array([])
@@ -612,7 +625,7 @@ class hyperopt_estimator(BaseEstimator):
         if self.verbose:
             print(' '.join(map(str, args)))
 
-    def fit_iter(self, X, y, EX_list=None, valid_size=.2, n_folds=None,
+    def fit_iter(self, X, y, groups=None, EX_list=None, valid_size=.2, n_folds=None,
                  cv_shuffle=False, warm_start=False,
                  random_state=np.random.RandomState(),
                  weights=None, increment=None):
@@ -637,7 +650,7 @@ class hyperopt_estimator(BaseEstimator):
         # self._best_loss = float('inf')
         # This is where the cost function is used.
         fn = partial(_cost_fn,
-                     X=X, y=y, EX_list=EX_list,
+                     X=X, y=y, groups=groups, EX_list=EX_list,
                      valid_size=valid_size, n_folds=n_folds,
                      shuffle=cv_shuffle, random_state=random_state,
                      use_partial_fit=self.use_partial_fit,
@@ -745,7 +758,7 @@ class hyperopt_estimator(BaseEstimator):
         else:
             self._best_learner.fit(XEX, y)
 
-    def fit(self, X, y, EX_list=None,
+    def fit(self, X, y, groups=None, EX_list=None,
             valid_size=.2, n_folds=None,
             cv_shuffle=False, warm_start=False,
             random_state=np.random.RandomState(),
@@ -755,7 +768,7 @@ class hyperopt_estimator(BaseEstimator):
         predictive model of y <- X. Store the best model for predictions.
 
         Args:
-            EX_list ([list]): List of exogenous datasets. Each must has the
+            EX_list ([list]): List of exogenous datasets. Each must have the
                               same number of samples as X.
             valid_size ([float]): The portion of the dataset used as the
                                   validation set. If cv_shuffle is False,
@@ -780,7 +793,9 @@ class hyperopt_estimator(BaseEstimator):
             assert len(EX_list) == self.n_ex_pps
 
         filename = self.fit_increment_dump_filename
-        fit_iter = self.fit_iter(X, y, EX_list=EX_list,
+        fit_iter = self.fit_iter(X, y,
+                                 groups=groups,
+                                 EX_list=EX_list,
                                  valid_size=valid_size,
                                  n_folds=n_folds,
                                  cv_shuffle=cv_shuffle,
